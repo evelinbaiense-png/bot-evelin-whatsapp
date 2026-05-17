@@ -186,13 +186,20 @@ def send_media_package(phone):
             send_image(phone, photo_url)
             time.sleep(1)
         time.sleep(2)
-        send_message(phone, "O que achou? Você mora aqui na região ou estava visitando por aqui?")
+        followup = "O que achou? Você mora aqui na região ou estava visitando por aqui?"
+        send_message(phone, followup)
+        # Adiciona ao histórico para o AI não repetir
+        if phone in conversations:
+            conversations[phone].append({"role": "assistant", "content": followup})
         print(f"Media package complete for {phone}")
     except Exception as e:
         print(f"Error in send_media_package for {phone}: {e}")
         import traceback
         traceback.print_exc()
-        send_message(phone, "O que achou? Você mora aqui na região ou estava visitando por aqui?")
+        followup = "O que achou? Você mora aqui na região ou estava visitando por aqui?"
+        send_message(phone, followup)
+        if phone in conversations:
+            conversations[phone].append({"role": "assistant", "content": followup})
 
 
 def send_alert(phone_client):
@@ -247,10 +254,29 @@ def get_ai_response(phone, user_message):
     conversations[phone].append({"role": "user", "content": user_message})
     history = conversations[phone][-20:]
 
+    from datetime import datetime
+    import pytz
+    try:
+        br_time = datetime.now(pytz.timezone("America/Sao_Paulo"))
+        hora = br_time.strftime("%H:%M")
+        hora_int = br_time.hour
+        if hora_int < 12:
+            saudacao = "Bom dia"
+        elif hora_int < 18:
+            saudacao = "Boa tarde"
+        else:
+            saudacao = "Boa noite"
+        time_context = f"[Horário atual em Brasília: {hora} — use '{saudacao}' se for cumprimentar]"
+    except:
+        time_context = ""
+
     api_messages = [
         {"role": "user", "content": "Olá"},
         {"role": "assistant", "content": GREETING},
     ] + history
+
+    if time_context:
+        api_messages = [{"role": "user", "content": time_context}, {"role": "assistant", "content": "Entendido."}] + api_messages
 
     response = client.messages.create(
         model="claude-sonnet-4-5-20250929",
@@ -347,6 +373,12 @@ def webhook():
                 message.get('conversation') or
                 ''
             ).strip()
+        elif msg_type == 'media' and media_type in ('image', 'video', 'sticker', 'document'):
+            # Cliente mandou foto/vídeo — responde naturalmente
+            reply = get_ai_response(phone, "[cliente enviou uma imagem]")
+            reply = reply.replace('[ALERTA]', '').replace('[ENVIAR_MIDIA]', '').strip()
+            send_message(phone, reply)
+            return jsonify({'status': 'ok'}), 200
         else:
             print(f"Skipping type: {msg_type}")
             return jsonify({'status': 'not_supported'}), 200
