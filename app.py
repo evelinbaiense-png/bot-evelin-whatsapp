@@ -123,7 +123,7 @@ def get_ai_response(phone, user_message):
 
 def send_message(phone, text):
     instance_token = os.environ.get('INSTANCE_TOKEN', UAZAPI_TOKEN)
-  url = f"{UAZAPI_URL}/send/text"
+    url = f"{UAZAPI_URL}/send/text"
     headers = {
         "token": instance_token,
         "Content-Type": "application/json"
@@ -138,86 +138,7 @@ def send_message(phone, text):
         return None
 
 @app.route('/webhook', methods=['POST'])
-@app.route('/webhook', methods=['POST'])
-@app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.json
-    try:
-        if not data:
-            return jsonify({'status': 'no_data'}), 200
-
-        message = data.get('message', {})
-        if not message:
-            return jsonify({'status': 'no_message'}), 200
-
-        if message.get('fromMe', False) or message.get('wasSentByApi', False):
-            return jsonify({'status': 'from_me'}), 200
-
-        if message.get('isGroup', False):
-            return jsonify({'status': 'group'}), 200
-
-        if message.get('type', '') != 'text':
-            return jsonify({'status': 'not_text'}), 200
-
-        sender_pn = message.get('sender_pn', '')
-        phone = sender_pn.replace('@s.whatsapp.net', '').replace('@c.us', '')
-        text = (message.get('text') or message.get('content') or '').strip()
-
-        print(f"phone={phone}, text={text[:50]}")
-
-        if not phone or not text:
-            return jsonify({'status': 'no_data'}), 200
-
-        reply = get_ai_response(phone, text)
-        send_message(phone, reply)
-
-        return jsonify({'status': 'ok'}), 200
-
-    except Exception as e:
-        print(f"Webhook error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
-    data = request.json
-    print(f"Webhook keys: {list(data.keys()) if data else 'None'}")
-
-    try:
-        if not data:
-            return jsonify({'status': 'no_data'}), 200
-
-        event_type = data.get('EventType', '')
-        chat = data.get('chat', '')
-        chat_source = data.get('chatSource', '')
-        message = data.get('message', {})
-
-        print(f"EventType={event_type}, chat={chat}, chatSource={chat_source}")
-        print(f"message keys={list(message.keys()) if message else 'None'}")
-
-        if '@g.us' in chat:
-            return jsonify({'status': 'group'}), 200
-
-        if message.get('fromMe', False):
-            return jsonify({'status': 'from_me'}), 200
-
-        text = (message.get('body') or
-                message.get('text') or
-                message.get('conversation') or '').strip()
-
-        phone = chat.replace('@s.whatsapp.net', '').replace('@c.us', '')
-
-        print(f"phone={phone}, text={text[:50]}")
-
-        if not phone or not text:
-            print(f"BLOCKED: phone='{phone}', text='{text}'")
-            return jsonify({'status': 'no_data'}), 200
-
-        reply = get_ai_response(phone, text)
-        print(f"AI reply: {reply[:50]}")
-        send_message(phone, reply)
-
-        return jsonify({'status': 'ok'}), 200
-
-    except Exception as e:
-        print(f"Webhook error: {e}")
-        return jsonify({'status': 'error', 'message': str(e)}), 500
     data = request.json
     print(f"Webhook received keys: {list(data.keys()) if data else 'None'}")
     print(f"wasSentByApi={data.get('wasSentByApi')}, type={data.get('type')}, sender_pn={data.get('sender_pn')}, text={data.get('text','')[:50]}")
