@@ -139,7 +139,43 @@ def send_message(phone, text):
 
 @app.route('/webhook', methods=['POST'])
 @app.route('/webhook', methods=['POST'])
+@app.route('/webhook', methods=['POST'])
 def webhook():
+    data = request.json
+    try:
+        if not data:
+            return jsonify({'status': 'no_data'}), 200
+
+        message = data.get('message', {})
+        if not message:
+            return jsonify({'status': 'no_message'}), 200
+
+        if message.get('fromMe', False) or message.get('wasSentByApi', False):
+            return jsonify({'status': 'from_me'}), 200
+
+        if message.get('isGroup', False):
+            return jsonify({'status': 'group'}), 200
+
+        if message.get('type', '') != 'text':
+            return jsonify({'status': 'not_text'}), 200
+
+        sender_pn = message.get('sender_pn', '')
+        phone = sender_pn.replace('@s.whatsapp.net', '').replace('@c.us', '')
+        text = (message.get('text') or message.get('content') or '').strip()
+
+        print(f"phone={phone}, text={text[:50]}")
+
+        if not phone or not text:
+            return jsonify({'status': 'no_data'}), 200
+
+        reply = get_ai_response(phone, text)
+        send_message(phone, reply)
+
+        return jsonify({'status': 'ok'}), 200
+
+    except Exception as e:
+        print(f"Webhook error: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
     data = request.json
     print(f"Webhook keys: {list(data.keys()) if data else 'None'}")
 
