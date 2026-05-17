@@ -54,14 +54,16 @@ QUANDO NÃO SOUBER RESPONDER:
 - Diga: "Deixa eu verificar essa informação pra você! 😊"
 - Inclua exatamente o marcador [ALERTA] no final da resposta (será removido automaticamente).
 
-QUANDO O CLIENTE ACEITAR AS MÍDIAS:
-- Inclua [ENVIAR_MIDIA] no final da resposta.
-- Continue a conversa normalmente perguntando o nome.
+QUANDO ENVIAR MÍDIAS:
+Inclua [ENVIAR_MIDIA] no final da resposta quando:
+- O cliente ACEITAR a oferta (sim, pode, quero, ok, claro, manda, etc.)
+- O cliente PEDIR fotos/vídeos diretamente ("quero ver", "manda foto", "tem fotos?", "queria ver", etc.)
+Em ambos os casos responda: "Olha que lindo! 😍 Mandando agora!" e inclua [ENVIAR_MIDIA]
 
 FLUXO:
 1. Responda primeiro o que o cliente perguntou, depois conduza.
 2. Assim que o cliente demonstrar qualquer interesse (morar, veraneio, investimento), ofereça as mídias IMEDIATAMENTE: "Que ótimo! 😊 Posso te mandar umas fotos e vídeos do empreendimento pra você já ter uma ideia?"
-3. Quando o cliente aceitar, inclua [ENVIAR_MIDIA] no final da resposta e pergunte o nome naturalmente.
+3. Quando o cliente aceitar ou pedir mídias, inclua [ENVIAR_MIDIA] e pergunte APENAS o primeiro nome.
 4. Qualifique a proximidade com a região:
    "[Nome], você mora aqui na região ou estava visitando?"
    - Se mora perto: "Que ótimo! Você tem disponibilidade esse final de semana pra dar uma passadinha? Me avisa antes — meu plantão é por escala e quero garantir seu atendimento 😊"
@@ -243,7 +245,7 @@ def get_ai_response(phone, user_message):
     ] + history
 
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model="claude-sonnet-4-5-20250929",
         max_tokens=400,
         system=SYSTEM_PROMPT,
         messages=api_messages
@@ -327,6 +329,14 @@ def webhook():
         # Detectar marcadores especiais
         alert_flag = '[ALERTA]' in reply
         media_flag = '[ENVIAR_MIDIA]' in reply
+
+        # Detectar pedido de mídia diretamente na mensagem do cliente
+        media_keywords = ['sim', 'pode', 'quero', 'ok', 'claro', 'manda', 'foto', 'fotos', 'video', 'vídeo', 'videos', 'vídeos', 'queria ver', 'quero ver', 'manda sim', 'pode mandar', 'com certeza', 'claro que sim']
+        if any(kw in text.lower() for kw in media_keywords):
+            # Só manda mídia se o bot ofereceu na mensagem anterior
+            last_bot_msg = conversations.get(phone, [{}])[-1].get('content', '') if conversations.get(phone) else ''
+            if any(kw in last_bot_msg.lower() for kw in ['foto', 'vídeo', 'video', 'imagens', 'mandar']):
+                media_flag = True
 
         # Limpar marcadores
         reply = reply.replace('[ALERTA]', '').replace('[ENVIAR_MIDIA]', '').strip()
