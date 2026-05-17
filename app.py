@@ -123,7 +123,7 @@ def get_ai_response(phone, user_message):
 
 def send_message(phone, text):
     instance_token = os.environ.get('INSTANCE_TOKEN', UAZAPI_TOKEN)
-    url = f"{UAZAPI_URL}/message/text"
+  url = f"{UAZAPI_URL}/send/text"
     headers = {
         "token": instance_token,
         "Content-Type": "application/json"
