@@ -293,13 +293,32 @@ def webhook():
         is_audio = msg_type in ('audio', 'ptt', 'audioMessage', 'PTT')
         is_media_audio = msg_type == 'media' and media_type not in ('image', 'video', 'document', 'sticker')
         if is_audio or is_media_audio:
-            audio_url = (
+            # Extrai URL do áudio (pode vir como dict ou string)
+            raw = (
                 message.get('url') or
                 message.get('mediaUrl') or
                 message.get('audioUrl') or
                 message.get('content') or
                 message.get('body')
             )
+            if isinstance(raw, dict):
+                audio_url = raw.get('URL') or raw.get('url') or raw.get('directPath')
+                media_key = raw.get('mediaKey', '')
+                # Tenta descriptografar via UAZAPI
+                if audio_url and media_key:
+                    try:
+                        decrypt_resp = requests.post(
+                            f"{UAZAPI_URL}/media/decrypt",
+                            headers={"token": get_instance_token(), "Content-Type": "application/json"},
+                            json={"url": audio_url, "mediaKey": media_key, "type": "audio"},
+                            timeout=30
+                        )
+                        if decrypt_resp.status_code == 200:
+                            audio_url = decrypt_resp.json().get('url', audio_url)
+                    except Exception as e:
+                        print(f"Decrypt error: {e}")
+            else:
+                audio_url = raw
             if audio_url:
                 text = transcribe_audio(audio_url)
                 if not text:
