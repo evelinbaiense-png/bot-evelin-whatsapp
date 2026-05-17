@@ -122,11 +122,10 @@ def get_ai_response(phone, user_message):
     return reply
 
 def send_message(phone, text, instance=None):
-    if instance is None:
-        instance = INSTANCE_NAME
-    url = f"{UAZAPI_URL}/message/sendText/{instance}"
+    instance_token = os.environ.get('INSTANCE_TOKEN', UAZAPI_TOKEN)
+    url = f"{UAZAPI_URL}/message/text"
     headers = {
-        "Authorization": f"Bearer {UAZAPI_TOKEN}",
+        "token": instance_token,
         "Content-Type": "application/json"
     }
     data = {"number": phone, "text": text}
