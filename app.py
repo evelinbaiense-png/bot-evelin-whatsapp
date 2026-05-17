@@ -278,6 +278,8 @@ def webhook():
             return jsonify({'status': 'group'}), 200
 
         msg_type = message.get('type', '') or message.get('messageType', '')
+        media_type = message.get('mediaType', '')
+        print(f"msg_type='{msg_type}', media_type='{media_type}'")
 
         sender_pn = message.get('sender_pn', '') or message.get('chatId', '')
         phone = sender_pn.replace('@s.whatsapp.net', '').replace('@c.us', '')
@@ -288,11 +290,14 @@ def webhook():
         text = ""
 
         # Áudio
-        if msg_type in ('audio', 'ptt', 'audioMessage', 'PTT'):
+        is_audio = msg_type in ('audio', 'ptt', 'audioMessage', 'PTT')
+        is_media_audio = msg_type == 'media' and media_type not in ('image', 'video', 'document', 'sticker')
+        if is_audio or is_media_audio:
             audio_url = (
                 message.get('url') or
                 message.get('mediaUrl') or
                 message.get('audioUrl') or
+                message.get('content') or
                 message.get('body')
             )
             if audio_url:
