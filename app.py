@@ -143,34 +143,24 @@ def webhook():
     print(f"Webhook: {json.dumps(data, indent=2)}")
     
     try:
-        event = data.get('event', '')
-        if 'message' not in event.lower() and event != 'messages.upsert':
-            return jsonify({'status': 'ignored'}), 200
-        
-        message_data = data.get('data', {})
-        key = message_data.get('key', {})
-        
-        if key.get('fromMe', False):
+        if data.get('wasSentByApi', False):
             return jsonify({'status': 'from_me'}), 200
         
-        remote_jid = key.get('remoteJid', '')
-        if '@g.us' in remote_jid:
+        if data.get('type', '') != 'text':
+            return jsonify({'status': 'not_text'}), 200
+        
+        sender_pn = data.get('sender_pn', '')
+        if '@g.us' in sender_pn:
             return jsonify({'status': 'group'}), 200
         
-        phone = remote_jid.replace('@s.whatsapp.net', '')
+        phone = sender_pn.replace('@s.whatsapp.net', '')
+        text = data.get('text', '').strip()
         
-        message = message_data.get('message', {})
-        text = (message.get('conversation') or
-                message.get('extendedTextMessage', {}).get('text') or
-                message.get('imageMessage', {}).get('caption') or '')
-        
-        if not text.strip():
-            return jsonify({'status': 'no_text'}), 200
-        
-        instance = data.get('instance', INSTANCE_NAME)
+        if not phone or not text:
+            return jsonify({'status': 'no_data'}), 200
         
         reply = get_ai_response(phone, text)
-        send_message(phone, reply, instance)
+        send_message(phone, reply)
         
         return jsonify({'status': 'ok'}), 200
         
