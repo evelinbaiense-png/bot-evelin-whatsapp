@@ -6,8 +6,6 @@ import os
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 import csv
-import time
-import random
 
 app = Flask(__name__)
 
@@ -94,6 +92,7 @@ AGENDAMENTO:
 Quando demonstrar interesse em visitar: "Ótimo! As visitas são de terça a domingo. Você prefere manhã ou tarde?"
 """
 
+
 def get_ai_response(phone, user_message):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
@@ -101,7 +100,6 @@ def get_ai_response(phone, user_message):
         conversations[phone] = []
 
     conversations[phone].append({"role": "user", "content": user_message})
-
     history = conversations[phone][-20:]
 
     api_messages = [
@@ -118,8 +116,8 @@ def get_ai_response(phone, user_message):
 
     reply = response.content[0].text
     conversations[phone].append({"role": "assistant", "content": reply})
-
     return reply
+
 
 def send_message(phone, text):
     instance_token = os.environ.get('INSTANCE_TOKEN', UAZAPI_TOKEN)
@@ -137,49 +135,73 @@ def send_message(phone, text):
         print(f"Error sending message: {e}")
         return None
 
+
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    print(f"Webhook received keys: {list(data.keys()) if data else 'None'}")
-    print(f"wasSentByApi={data.get('wasSentByApi')}, type={data.get('type')}, sender_pn={data.get('sender_pn')}, text={data.get('text','')[:50]}")
+    print(f"Webhook keys: {list(data.keys()) if data else 'None'}")
 
     try:
         if not data:
             return jsonify({'status': 'no_data'}), 200
 
-        if data.get('wasSentByApi', False):
+        # UAZAPI GO format: message fields are inside 'message' object
+        message = data.get('message', {})
+
+        if not message:
+            return jsonify({'status': 'no_message'}), 200
+
+        print(f"message keys: {list(message.keys())}")
+
+        # Filter out messages sent by the bot itself
+        if message.get('fromMe', False) or message.get('wasSentByApi', False):
             return jsonify({'status': 'from_me'}), 200
 
-        if data.get('type', '') != 'text':
-            return jsonify({'status': 'not_text'}), 200
-
-        sender_pn = data.get('sender_pn', '')
-        print(f"sender_pn value: '{sender_pn}'")
-
-        if '@g.us' in sender_pn:
+        # Filter out group messages
+        if message.get('isGroup', False):
             return jsonify({'status': 'group'}), 200
 
-        phone = sender_pn.replace('@s.whatsapp.net', '')
-        text = data.get('text', '').strip()
+        # Only process text messages
+        msg_type = message.get('type', '') or message.get('messageType', '')
+        if msg_type not in ('text', 'Conversation', 'extendedTextMessage'):
+            print(f"Skipping non-text type: {msg_type}")
+            return jsonify({'status': 'not_text'}), 200
 
-        print(f"phone='{phone}', text='{text[:50]}'")
+        # Get phone number from sender_pn
+        sender_pn = message.get('sender_pn', '') or message.get('chatId', '')
+        phone = sender_pn.replace('@s.whatsapp.net', '').replace('@c.us', '').replace('@s.whatsapp.net', '')
+
+        # Get message text
+        text = (
+            message.get('text') or
+            message.get('body') or
+            message.get('content') or
+            message.get('conversation') or
+            ''
+        ).strip()
+
+        print(f"phone='{phone}', text='{text[:80]}'")
 
         if not phone or not text:
-            print(f"BLOCKED: phone empty={not phone}, text empty={not text}")
+            print(f"BLOCKED: missing phone or text")
             return jsonify({'status': 'no_data'}), 200
 
         reply = get_ai_response(phone, text)
-        print(f"AI reply: {reply[:50]}")
+        print(f"Sending reply: {reply[:80]}")
         send_message(phone, reply)
 
         return jsonify({'status': 'ok'}), 200
 
     except Exception as e:
         print(f"Webhook error: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
 
 recovery_contacts = []
 recovery_index = 0
+
 
 def load_recovery_contacts():
     global recovery_contacts
@@ -191,6 +213,7 @@ def load_recovery_contacts():
             print(f"Loaded {len(recovery_contacts)} recovery contacts")
     except Exception as e:
         print(f"Error loading recovery contacts: {e}")
+
 
 def send_recovery_message():
     global recovery_index, recovery_contacts
@@ -220,14 +243,17 @@ def send_recovery_message():
 
     recovery_index += 1
 
+
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'running', 'timestamp': datetime.now().isoformat()}), 200
+
 
 @app.route('/recovery/start', methods=['POST'])
 def start_recovery():
     load_recovery_contacts()
     return jsonify({'status': 'ok', 'contacts': len(recovery_contacts)}), 200
+
 
 if __name__ == '__main__':
     scheduler = BackgroundScheduler()
