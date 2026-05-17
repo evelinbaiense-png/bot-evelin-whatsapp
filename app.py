@@ -96,32 +96,32 @@ Quando demonstrar interesse em visitar: "Ótimo! As visitas são de terça a dom
 
 def get_ai_response(phone, user_message):
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-    
+
     if phone not in conversations:
         conversations[phone] = []
-    
+
     conversations[phone].append({"role": "user", "content": user_message})
-    
+
     history = conversations[phone][-20:]
-    
+
     api_messages = [
         {"role": "user", "content": "Olá"},
         {"role": "assistant", "content": GREETING},
     ] + history
-    
+
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=400,
         system=SYSTEM_PROMPT,
         messages=api_messages
     )
-    
+
     reply = response.content[0].text
     conversations[phone].append({"role": "assistant", "content": reply})
-    
+
     return reply
 
-def send_message(phone, text, instance=None):
+def send_message(phone, text):
     instance_token = os.environ.get('INSTANCE_TOKEN', UAZAPI_TOKEN)
     url = f"{UAZAPI_URL}/message/text"
     headers = {
@@ -131,7 +131,7 @@ def send_message(phone, text, instance=None):
     data = {"number": phone, "text": text}
     try:
         response = requests.post(url, headers=headers, json=data, timeout=10)
-        print(f"Message sent to {phone}: {response.status_code}")
+        print(f"Message sent to {phone}: {response.status_code} - {response.text[:200]}")
         return response
     except Exception as e:
         print(f"Error sending message: {e}")
@@ -140,31 +140,40 @@ def send_message(phone, text, instance=None):
 @app.route('/webhook', methods=['POST'])
 def webhook():
     data = request.json
-    print(f"Webhook: {json.dumps(data, indent=2)}")
-    
+    print(f"Webhook received keys: {list(data.keys()) if data else 'None'}")
+    print(f"wasSentByApi={data.get('wasSentByApi')}, type={data.get('type')}, sender_pn={data.get('sender_pn')}, text={data.get('text','')[:50]}")
+
     try:
+        if not data:
+            return jsonify({'status': 'no_data'}), 200
+
         if data.get('wasSentByApi', False):
             return jsonify({'status': 'from_me'}), 200
-        
+
         if data.get('type', '') != 'text':
             return jsonify({'status': 'not_text'}), 200
-        
+
         sender_pn = data.get('sender_pn', '')
-print(f"DEBUG - sender_pn: {sender_pn}, text: {data.get('text','')}, type: {data.get('type','')}")
+        print(f"sender_pn value: '{sender_pn}'")
+
         if '@g.us' in sender_pn:
             return jsonify({'status': 'group'}), 200
-        
+
         phone = sender_pn.replace('@s.whatsapp.net', '')
         text = data.get('text', '').strip()
-        
+
+        print(f"phone='{phone}', text='{text[:50]}'")
+
         if not phone or not text:
+            print(f"BLOCKED: phone empty={not phone}, text empty={not text}")
             return jsonify({'status': 'no_data'}), 200
-        
+
         reply = get_ai_response(phone, text)
+        print(f"AI reply: {reply[:50]}")
         send_message(phone, reply)
-        
+
         return jsonify({'status': 'ok'}), 200
-        
+
     except Exception as e:
         print(f"Webhook error: {e}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -186,29 +195,29 @@ def load_recovery_contacts():
 def send_recovery_message():
     global recovery_index, recovery_contacts
     load_recovery_contacts()
-    
+
     if not recovery_contacts or recovery_index >= len(recovery_contacts):
         recovery_index = 0
         return
-    
+
     contact = recovery_contacts[recovery_index]
     phone = contact.get('telefone', '').replace(' ', '').replace('-', '').replace('(', '').replace(')', '')
     name = contact.get('nome', '')
     custom_msg = contact.get('mensagem', '')
-    
+
     if not phone:
         recovery_index += 1
         return
-    
+
     if custom_msg:
         message = custom_msg
     else:
         message = f"Oi{' ' + name if name else ''}! Aqui é a Evelin 😊 Ainda temos algumas unidades disponíveis no Praia Rasa de Búzios 2 — e as últimas estão saindo rápido. Você ainda tem interesse?"
-    
+
     result = send_message(phone, message)
     if result and result.status_code == 200:
         print(f"Recovery message sent to {phone} ({name})")
-    
+
     recovery_index += 1
 
 @app.route('/health', methods=['GET'])
@@ -224,6 +233,6 @@ if __name__ == '__main__':
     scheduler = BackgroundScheduler()
     scheduler.add_job(send_recovery_message, 'interval', hours=RECOVERY_INTERVAL_HOURS)
     scheduler.start()
-    
+
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
