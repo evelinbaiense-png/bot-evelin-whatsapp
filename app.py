@@ -174,16 +174,25 @@ def send_video(phone, video_url, caption=""):
 
 
 def send_media_package(phone):
-    """Envia todas as fotos e o vídeo para o cliente"""
-    send_message(phone, "Olha que lindo! 😍 Algumas fotos do empreendimento:")
-    for photo_url in PHOTOS:
-        send_image(phone, photo_url)
-        time.sleep(1.5)
-    time.sleep(2)
-    send_message(phone, "E aqui os vídeos do empreendimento 🎥")
-    send_video(phone, VIDEO_URL_1)
-    time.sleep(3)
-    send_video(phone, VIDEO_URL_2)
+    """Envia vídeos primeiro, depois fotos, e continua a conversa"""
+    try:
+        send_message(phone, "Olha só os vídeos do empreendimento 👇")
+        send_video(phone, VIDEO_URL_1)
+        time.sleep(2)
+        send_video(phone, VIDEO_URL_2)
+        time.sleep(2)
+        send_message(phone, "E aqui algumas fotos 📍")
+        for photo_url in PHOTOS:
+            send_image(phone, photo_url)
+            time.sleep(1)
+        time.sleep(2)
+        send_message(phone, "O que achou? Você mora aqui na região ou estava visitando por aqui?")
+        print(f"Media package complete for {phone}")
+    except Exception as e:
+        print(f"Error in send_media_package for {phone}: {e}")
+        import traceback
+        traceback.print_exc()
+        send_message(phone, "O que achou? Você mora aqui na região ou estava visitando por aqui?")
 
 
 def send_alert(phone_client):
