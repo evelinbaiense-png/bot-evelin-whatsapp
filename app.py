@@ -25,15 +25,16 @@ conversations = {}
 # ─── MÍDIAS ──────────────────────────────────────────────────────────────────
 
 PHOTOS = [
-    "https://drive.google.com/uc?export=view&id=1Je_rVOPnQfDkeGwuwNpfqypttGb95pWb",
-    "https://drive.google.com/uc?export=view&id=1bTLYBS50XzQG7KzovHxLELhIR_YOOc8P",
-    "https://drive.google.com/uc?export=view&id=1dTiuIxOCx2Is0yhEj-hvr1bRk3GAB8Ek",
-    "https://drive.google.com/uc?export=view&id=1DpQgPxj6Pxb1kIyZXbrvqKZZY3xjaTOP",
-    "https://drive.google.com/uc?export=view&id=1E3O6ZMnCA6wca1-vlD_VAaES03Z3k_DZ",
-    "https://drive.google.com/uc?export=view&id=1j2Lj7XN6o5hB616M0DqGb1HKwi-yU0g8",
+    "https://res.cloudinary.com/dd6o3z4ma/image/upload/v1779039971/WhatsApp_Image_2026-05-17_at_13.23.56_itxlrx.jpg",
+    "https://res.cloudinary.com/dd6o3z4ma/image/upload/v1779039971/WhatsApp_Image_2026-05-17_at_13.23.57_wmlvhl.jpg",
+    "https://res.cloudinary.com/dd6o3z4ma/image/upload/v1779039971/WhatsApp_Image_2026-05-17_at_13.23.35_eioep1.jpg",
+    "https://res.cloudinary.com/dd6o3z4ma/image/upload/v1779039971/WhatsApp_Image_2026-05-17_at_13.23.57_1_mszdep.jpg",
+    "https://res.cloudinary.com/dd6o3z4ma/image/upload/v1779039971/WhatsApp_Image_2026-05-17_at_13.23.35_1_kidkrk.jpg",
+    "https://res.cloudinary.com/dd6o3z4ma/image/upload/v1779039971/WhatsApp_Image_2026-05-17_at_13.23.34_cxhs57.jpg",
+    "https://res.cloudinary.com/dd6o3z4ma/image/upload/v1779040450/Editedimage_1776197718307_ms669e.png",
 ]
-VIDEO_URL_1 = "https://drive.google.com/uc?export=download&id=1rr0OuX5LvqZJkSh75J5a81iMkY8UXDuR"
-VIDEO_URL_2 = "https://drive.google.com/uc?export=download&id=1EKweZUSQO_N7Sjc0aARwAsOBAoRR-OKn"
+VIDEO_URL_1 = "https://res.cloudinary.com/dd6o3z4ma/video/upload/v1779039974/WhatsApp_Video_2026-05-17_at_13.15.06_zrc6fs.mp4"
+VIDEO_URL_2 = "https://res.cloudinary.com/dd6o3z4ma/video/upload/v1779039973/WhatsApp_Video_2026-05-17_at_13.19.32_b5ptia.mp4"
 
 # ─── MENSAGENS ────────────────────────────────────────────────────────────────
 
