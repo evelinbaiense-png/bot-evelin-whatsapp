@@ -150,6 +150,7 @@ def webhook():
             return jsonify({'status': 'not_text'}), 200
         
         sender_pn = data.get('sender_pn', '')
+print(f"DEBUG - sender_pn: {sender_pn}, text: {data.get('text','')}, type: {data.get('type','')}")
         if '@g.us' in sender_pn:
             return jsonify({'status': 'group'}), 200
         
