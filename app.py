@@ -149,42 +149,27 @@ def send_message(phone, text):
 
 
 def send_image(phone, image_url, caption=""):
-    instance_token = get_instance_token()
-    headers = {"token": instance_token, "Content-Type": "application/json"}
-    # Tenta diferentes formatos de endpoint/parametro
-    attempts = [
-        (f"{UAZAPI_URL}/send/image", {"number": phone, "url": image_url, "caption": caption}),
-        (f"{UAZAPI_URL}/send/image", {"number": phone, "image": image_url, "caption": caption}),
-        (f"{UAZAPI_URL}/send/media", {"number": phone, "url": image_url, "type": "image", "caption": caption}),
-    ]
-    for endpoint, data in attempts:
-        try:
-            response = requests.post(endpoint, headers=headers, json=data, timeout=30)
-            print(f"Image attempt {endpoint}: {response.status_code} - {response.text[:200]}")
-            if response.status_code == 200:
-                return response
-        except Exception as e:
-            print(f"Error sending image to {endpoint}: {e}")
-    return None
+    headers = {"token": get_instance_token(), "Content-Type": "application/json"}
+    data = {"number": phone, "type": "image", "file": image_url, "caption": caption}
+    try:
+        response = requests.post(f"{UAZAPI_URL}/send/media", headers=headers, json=data, timeout=30)
+        print(f"Image sent to {phone}: {response.status_code} - {response.text[:200]}")
+        return response
+    except Exception as e:
+        print(f"Error sending image: {e}")
+        return None
 
 
 def send_video(phone, video_url, caption=""):
-    instance_token = get_instance_token()
-    headers = {"token": instance_token, "Content-Type": "application/json"}
-    attempts = [
-        (f"{UAZAPI_URL}/send/video", {"number": phone, "url": video_url, "caption": caption}),
-        (f"{UAZAPI_URL}/send/video", {"number": phone, "video": video_url, "caption": caption}),
-        (f"{UAZAPI_URL}/send/media", {"number": phone, "url": video_url, "type": "video", "caption": caption}),
-    ]
-    for endpoint, data in attempts:
-        try:
-            response = requests.post(endpoint, headers=headers, json=data, timeout=60)
-            print(f"Video attempt {endpoint}: {response.status_code} - {response.text[:200]}")
-            if response.status_code == 200:
-                return response
-        except Exception as e:
-            print(f"Error sending video to {endpoint}: {e}")
-    return None
+    headers = {"token": get_instance_token(), "Content-Type": "application/json"}
+    data = {"number": phone, "type": "video", "file": video_url, "caption": caption}
+    try:
+        response = requests.post(f"{UAZAPI_URL}/send/media", headers=headers, json=data, timeout=60)
+        print(f"Video sent to {phone}: {response.status_code} - {response.text[:200]}")
+        return response
+    except Exception as e:
+        print(f"Error sending video: {e}")
+        return None
 
 
 def send_media_package(phone):
