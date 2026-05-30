@@ -345,6 +345,31 @@ def send_alert(phone_client):
         send_message(number, alert_msg)
 
 
+def send_and_check(phone, text):
+    """Envia e confirma. Se a uazapi não retornar 200 (ex.: 503 = WhatsApp
+    desconectado), registra no log e tenta te avisar."""
+    resp = send_message(phone, text)
+    status = getattr(resp, 'status_code', None) if resp is not None else None
+    if status != 200:
+        print(f"❌ FALHA DE ENVIO para {phone} (status {status}). WhatsApp pode estar desconectado.")
+        for number in ALERT_NUMBERS:
+            if number != phone:
+                send_message(number, f"⚠️ Não consegui enviar pro cliente {phone} (status {status}). "
+                                     f"Verifique se o WhatsApp está conectado na uazapi.")
+        return False
+    return True
+
+
+def notify_ai_failure(phone):
+    """Quando a IA falha (sem saldo na API, limite ou instabilidade): te avisa e
+    dá um retorno leve ao cliente, em vez de deixá-lo no vácuo."""
+    for number in ALERT_NUMBERS:
+        if number != phone:
+            send_message(number, f"⚠️ A IA falhou ao responder o cliente {phone}. "
+                                 f"Pode ser saldo da API esgotado, limite atingido ou instabilidade. Assuma a conversa!")
+    send_message(phone, "Oi! 😊 Só um instante que já te respondo certinho.")
+
+
 # ─── TRANSCRIÇÃO DE ÁUDIO ─────────────────────────────────────────────────────
 
 def transcribe_audio(audio_url):
@@ -407,12 +432,19 @@ def get_ai_response(phone, user_message):
         {"role": "assistant", "content": GREETING},
     ] + last_20
 
-    response = client.messages.create(
-        model="claude-sonnet-4-5-20250929",
-        max_tokens=600,
-        system=system,
-        messages=api_messages
-    )
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=600,
+            system=system,
+            messages=api_messages
+        )
+    except Exception as e:
+        # Falha da IA: sem saldo na API (erro 400), limite atingido (429) ou
+        # instabilidade. Em vez de quebrar o webhook e ficar mudo, sinaliza o
+        # erro (reply=None) para o webhook tratar e te avisar.
+        print(f"❌ ERRO NA IA (Anthropic) para {phone}: {e}")
+        return None, False, False
 
     reply_raw   = response.content[0].text
     alert_flag  = '[ALERTA]' in reply_raw
@@ -542,7 +574,10 @@ def webhook():
         # Cliente enviou imagem/vídeo
         elif msg_type == 'media' and media_type in ('image', 'video', 'sticker', 'document'):
             reply, alert_flag, media_flag = get_ai_response(phone, "[cliente enviou uma imagem]")
-            send_message(phone, reply)
+            if reply is None:
+                notify_ai_failure(phone)
+                return jsonify({'status': 'ai_error'}), 200
+            send_and_check(phone, reply)
             if alert_flag:
                 send_alert(phone)
             if media_flag:
@@ -558,6 +593,9 @@ def webhook():
         print(f"phone='{phone}', text='{text[:80]}'")
 
         reply, alert_flag, media_flag = get_ai_response(phone, text)
+        if reply is None:
+            notify_ai_failure(phone)
+            return jsonify({'status': 'ai_error'}), 200
 
         # Rede de segurança: se o modelo não emitiu a tag mas o cliente claramente
         # aceitou ver mídia logo após você oferecer.
@@ -573,7 +611,7 @@ def webhook():
                 media_flag = True
 
         print(f"Sending reply: {reply[:80]}")
-        send_message(phone, reply)
+        send_and_check(phone, reply)
 
         if alert_flag:
             send_alert(phone)
