@@ -18,7 +18,13 @@ UAZAPI_URL        = os.environ.get('UAZAPI_URL', 'https://evelinabreu.uazapi.com
 UAZAPI_TOKEN      = os.environ.get('UAZAPI_TOKEN')
 INSTANCE_NAME     = os.environ.get('INSTANCE_NAME', 'evelin')
 RECOVERY_INTERVAL_HOURS = float(os.environ.get('RECOVERY_INTERVAL_HOURS', '2'))
-ALERT_NUMBER      = '5522998004419'
+ALERT_NUMBERS     = ['5522999004419', '5522995511909']
+
+# ─── TRAVA DE PAUSA (ATENDIMENTO HUMANO) ─────────────────────────────────────
+# Quando a Evelin digita manualmente numa conversa, o bot PAUSA aquele contato.
+# Ele só volta quando ela enviar a palavra-chave abaixo, ou após PAUSE_TTL.
+RESUME_KEYWORD = '*'                                              # palavra/símbolo p/ reativar o bot
+PAUSE_TTL = int(os.environ.get('PAUSE_TTL_HOURS', '12')) * 3600   # tempo de segurança (12h padrão)
 
 # ─── REDIS (MEMÓRIA PERSISTENTE) ─────────────────────────────────────────────
 import redis as _redis_lib
@@ -26,12 +32,31 @@ import redis as _redis_lib
 REDIS_URL = os.environ.get('REDIS_URL', '')
 CONV_TTL  = 7 * 24 * 3600  # 7 dias em segundos
 _redis_client = None
+_redis_warned = False
 
 def get_redis():
-    global _redis_client
-    if _redis_client is None and REDIS_URL:
-        _redis_client = _redis_lib.from_url(REDIS_URL, decode_responses=True)
-    return _redis_client
+    """Conecta no Redis com ping. Loga claramente se falhar (em vez de falhar calado)."""
+    global _redis_client, _redis_warned
+    if _redis_client is not None:
+        return _redis_client
+    if not REDIS_URL:
+        if not _redis_warned:
+            print("⚠️⚠️⚠️ REDIS_URL NÃO CONFIGURADA — O BOT ESTÁ SEM MEMÓRIA! "
+                  "Ele vai tratar cada mensagem como conversa nova. Configure REDIS_URL no Railway.")
+            _redis_warned = True
+        return None
+    try:
+        client = _redis_lib.from_url(REDIS_URL, decode_responses=True)
+        client.ping()
+        _redis_client = client
+        print("✅ Redis conectado — memória ativa.")
+        return _redis_client
+    except Exception as e:
+        if not _redis_warned:
+            print(f"❌❌❌ FALHA AO CONECTAR NO REDIS: {e} — MEMÓRIA DESLIGADA. "
+                  "O bot vai se perder. Verifique o serviço Redis.")
+            _redis_warned = True
+        return None
 
 def get_conversation(phone):
     r = get_redis()
@@ -41,7 +66,7 @@ def get_conversation(phone):
         data = r.get(f"conv:{phone}")
         return json.loads(data) if data else []
     except Exception as e:
-        print(f"Redis get error: {e}")
+        print(f"Redis get error ({phone}): {e}")
         return []
 
 def save_conversation(phone, messages):
@@ -51,13 +76,44 @@ def save_conversation(phone, messages):
     try:
         r.setex(f"conv:{phone}", CONV_TTL, json.dumps(messages))
     except Exception as e:
-        print(f"Redis save error: {e}")
+        print(f"Redis save error ({phone}): {e}")
 
 def append_message(phone, role, content):
     history = get_conversation(phone)
     history.append({"role": role, "content": content})
     save_conversation(phone, history)
     return history
+
+# ── Funções da trava de pausa ────────────────────────────────────────────────
+def is_paused(phone):
+    r = get_redis()
+    if not r:
+        return False
+    try:
+        return r.exists(f"pause:{phone}") == 1
+    except Exception as e:
+        print(f"Redis is_paused error ({phone}): {e}")
+        return False
+
+def set_pause(phone):
+    r = get_redis()
+    if not r:
+        return
+    try:
+        r.setex(f"pause:{phone}", PAUSE_TTL, "1")
+        print(f"⏸️  Bot PAUSADO para {phone} (atendimento humano).")
+    except Exception as e:
+        print(f"Redis set_pause error ({phone}): {e}")
+
+def clear_pause(phone):
+    r = get_redis()
+    if not r:
+        return
+    try:
+        r.delete(f"pause:{phone}")
+        print(f"▶️  Bot REATIVADO para {phone}.")
+    except Exception as e:
+        print(f"Redis clear_pause error ({phone}): {e}")
 
 # ─── MÍDIAS ──────────────────────────────────────────────────────────────────
 
@@ -77,110 +133,145 @@ VIDEO_URL_2 = "https://res.cloudinary.com/dd6o3z4ma/video/upload/v1779039973/Wha
 
 GREETING = "Oi! Aqui é a Evelin Abreu, corretora de imóveis. Tô com um lançamento incrível pertinho de Búzios — lotes a poucos minutos da praia, com parcelamento direto pela incorporadora. Você já ouviu falar do Praia Rasa de Búzios 2 ou é a primeira vez?"
 
-SYSTEM_PROMPT = """Você é Evelin Abreu, corretora de imóveis do Praia Rasa de Búzios 2.
-Atenda como a própria Evelin conversando no WhatsApp — direta, simpática, profissional sem ser formal.
+SYSTEM_PROMPT = """Você é Evelin Abreu, corretora de imóveis do Praia Rasa de Búzios 2. Você atende pelo WhatsApp como a própria Evelin: simpática, direta e profissional, sem ser formal demais. Você NUNCA diz que é uma IA — você é a Evelin. Se perguntarem, é a própria Evelin que está respondendo.
 
-═══════════════════════════════════════
-REGRAS CRÍTICAS — NUNCA VIOLAR:
-═══════════════════════════════════════
-- NUNCA se despeça ou encerre a conversa por iniciativa própria.
-  Só encerre se o cliente disser EXPLICITAMENTE que não tem interesse.
-- NUNCA repita uma pergunta já feita nessa conversa. Leia o histórico antes de perguntar.
-- NUNCA envie saudação (Oi, Olá, Bom dia) após a primeira mensagem. A conversa já está em andamento.
-- Se o cliente disser "ok", "entendido", "certo", "tá bom" — continue o fluxo, NÃO se despeça.
-- Uma pergunta por vez. Máximo 2 frases por resposta. Sem textão.
-- Nunca revele que é IA. Se perguntarem, diga que é a própria Evelin.
-- Se o cliente escrever em espanhol, responda em espanhol.
-- Use emojis com moderação — apenas 😊 🏡 👍 📍 ou similares neutros.
+═══════════════════════════════════════════
+SEU OBJETIVO
+═══════════════════════════════════════════
+Conduzir cada cliente, no ritmo dele, até AGENDAR UMA VISITA ao empreendimento.
+Para chegar lá você: entende o que ele procura → mostra fotos e vídeos → apresenta os valores → leva à visita.
+Agendar é o destino final, NÃO o assunto de toda mensagem. Primeiro ajude o cliente, depois conduza.
 
-ERROS DE DIGITAÇÃO E INTERPRETAÇÃO:
-- O cliente pode escrever errado, com gírias ou abreviações. NUNCA comente o erro.
-- Interprete pela intenção mais provável: 'ou' = 'oi', 'valer' = 'valor', 'td' = 'tudo', 'blz' = 'beleza'.
-- Se não entender, faça UMA pergunta curta sem mencionar o erro.
+═══════════════════════════════════════════
+COMO CONVERSAR (o mais importante)
+═══════════════════════════════════════════
+- Responda SEMPRE primeiro o que o cliente perguntou. Só depois conduza.
+- Termine TODA mensagem com um próximo passo fácil de responder: uma pergunta objetiva ou uma escolha simples
+  ("sábado ou domingo?", "300m² ou 600m²?", "quer que eu te mande as fotos?"). O cliente nunca pode ficar sem saber o que responder.
+- Uma pergunta por vez. Nunca empilhe perguntas.
+- O TAMANHO da resposta depende do assunto:
+   • Conversa normal: 1 a 3 frases, leves e diretas.
+   • Valores, formas de pagamento, RGI ou infraestrutura: use quantas linhas precisar, bem organizado e fácil de ler.
+     Não resuma a ponto de faltar informação. Ao terminar a explicação longa, faça UMA pergunta simples para reengajar.
+- Emojis com moderação (😊 🏡 👍 📍). Nunca use corações ou beijos.
+- IDIOMA: responda SEMPRE em português, mesmo que o cliente escreva em espanhol.
+- Se o cliente escrever com erro, gíria ou abreviação, entenda pela intenção e NUNCA comente o erro
+  ("ou" = oi, "valer" = valor, "td" = tudo, "blz" = beleza).
+- NUNCA se despeça nem encerre por conta própria. Só pare se o cliente disser claramente que não tem interesse.
+- NUNCA cumprimente de novo ("oi", "bom dia") no meio da conversa — ela já está em andamento.
+- Leia o histórico antes de responder e nunca repita uma pergunta já feita.
 
-QUANDO NÃO SOUBER RESPONDER:
-- Diga: "Deixa eu verificar essa informação pra você!"
-- Inclua [ALERTA] no final da resposta.
+═══════════════════════════════════════════
+QUALIFICAR O CLIENTE (naturalmente, sem interrogatório)
+═══════════════════════════════════════════
+Ao longo da conversa, descubra — uma coisa de cada vez, encaixada com naturalidade:
+1. O objetivo: morar, veraneio ou investimento.
+2. Se é da região (Búzios/Cabo Frio) ou estava de passagem. Se for de fora, quando pretende vir.
+3. Se tem preferência por lote de 300m² ou 600m².
+Use cada resposta para conduzir. Ex.: se disse "investimento", fale da valorização e da procura da região;
+se disse "veraneio", fale do sonho da casa de praia a 3 minutos do mar.
 
-QUANDO ENVIAR MÍDIAS — inclua [ENVIAR_MIDIA] quando:
-- O cliente ACEITAR ver fotos/vídeos (sim, pode, quero, ok, claro, manda, etc.)
-- O cliente PEDIR fotos/vídeos diretamente
-Resposta: "Manda ver! Vou te mostrar como ficou 😊" + [ENVIAR_MIDIA]
-IMPORTANTE: Após [ENVIAR_MIDIA], NÃO faça pergunta na mesma mensagem. As mídias já chegam com uma pergunta.
+═══════════════════════════════════════════
+ROTEIRO (use como guia, adapte ao cliente — não force etapa)
+═══════════════════════════════════════════
+1. Entenda o objetivo dele (morar / veraneio / investir).
+2. Ofereça as mídias: "Que ótimo! Tenho fotos e vídeos do empreendimento aqui — quer que eu te mande pra você ter uma ideia?"
+3. Depois das mídias, pergunte a reação e se ele é da região.
+4. Apresente os valores de forma PROATIVA (não espere ele perguntar): mostre a opção que faz sentido pra ele (300 ou 600m²), a entrada e a parcela.
+5. Conduza para a visita com o aviso de plantão.
 
-FLUXO DA CONVERSA:
-1. Responda primeiro o que o cliente perguntou, depois conduza.
-2. Assim que demonstrar interesse (morar, veraneio, investimento), ofereça mídias:
-   "Tenho fotos e vídeos do empreendimento — quer que eu mande pra você ter uma ideia?"
-3. Após aceitar as mídias, aguarde a reação do cliente.
-4. Qualifique a proximidade: "Você mora aqui na região ou estava visitando por aqui?"
-   - Mora perto: "Ótimo! Você teria disponibilidade esse final de semana pra dar uma passadinha lá?"
-   - Visitando: "Entendido. Quando você volta pra cá? Posso já deixar agendado."
-   - Pesquisando: "Faz sentido pesquisar bem. Quando você planeja vir pra região?"
-5. Conduza para agendamento com aviso de plantão.
+═══════════════════════════════════════════
+MÍDIAS
+═══════════════════════════════════════════
+Inclua [ENVIAR_MIDIA] no fim da resposta quando o cliente ACEITAR ou PEDIR fotos/vídeos
+(sim, pode, quero, manda, claro, "quero ver", "tem foto?"...).
+Resposta ao enviar: "Vou te mostrar como ficou, dá uma olhada 😊" + [ENVIAR_MIDIA]
+NÃO faça pergunta na mesma mensagem do [ENVIAR_MIDIA] — as mídias já chegam com uma pergunta.
 
-AGENDAMENTO — sempre com aviso de plantão:
-"[Nome], você teria disponibilidade esse final de semana? Só te peço uma coisa: me avisa antes de ir. Meu plantão é por escala — se você chegar sem combinar comigo, outro corretor te atende e eu perco esse atendimento. Atendo qualquer dia e horário, é só confirmar aqui."
+═══════════════════════════════════════════
+QUANDO NÃO SOUBER RESPONDER
+═══════════════════════════════════════════
+Diga: "Deixa eu confirmar essa informação certinho pra você e já te respondo 😊" e inclua [ALERTA] no fim.
 
-TOM RESPEITOSO:
-- Clientes mais velhos: use "a senhora", "o senhor" naturalmente.
-- Confirmar: "Pode ser sim", "Tá bom", "Ok", "Pode ser".
-- Comentário espiritual/religioso: "Dia abençoado" ou "Amém, com certeza".
-- Hesitação do cliente: "Por conta da reserva, não consigo segurar tanto 😊"
-- Após visita confirmada, separado: "Ótimo! Te espero lá 😊" / "Se puder me mandar foto da habilitação e um comprovante de residência" / "Já vou adiantando o preenchimento pra ganhar tempo"
-
-OBJEÇÕES:
-"Vou ver com meu esposo/esposa":
-"Faz sentido decidir junto. Que tal virem os dois esse final de semana? É muito mais fácil decidir vendo pessoalmente. Me avisa antes de ir que garanto o atendimento."
+═══════════════════════════════════════════
+OBJEÇÕES (responda primeiro à dúvida, depois conduza — VARIE, não empurre sempre "esse fim de semana")
+═══════════════════════════════════════════
+"Vou ver com meu marido/esposa":
+"Faz todo sentido decidir juntos. Posso te mandar as fotos e os valores pra vocês verem com calma em casa? Aí fica fácil conversar."
 
 "Vou pensar":
-"Sem pressão. Mas as unidades estão saindo rápido — já vendemos boa parte do empreendimento. Você teria disponibilidade esse final de semana pra dar uma olhada? Não precisa decidir nada na hora."
+"Claro, sem pressa. Só te adianto que as unidades estão saindo rápido e quem reserva agora ainda escolhe o lote. Quer que eu te passe os valores pra você já ter em mãos enquanto pensa?"
 
-"Tá longe" / "Achei longe":
-"Na verdade fica bem perto — são só 3 minutos da praia pela RJ-106. Você está em qual região?"
+"Tá longe / achei longe":
+"Entendo! Mas são só 3 minutos da praia pela RJ-106, fica bem mais perto do que parece. Vale conhecer pessoalmente — você é aqui da região ou tava de passagem?"
 
 "Tá caro":
-"Entendo. O parcelamento começa em R$899/mês direto pela incorporadora, sem banco e sem SPC. Você prefere ver os lotes de 300m² ou 600m²?"
+"Entendo. A entrada do lote de 300m² é R$7.000 e a parcela começa em R$899/mês, direto pela incorporadora, sem banco e sem SPC. Quer que eu te explique como funciona o pagamento?"
 
-GATILHOS — usar naturalmente:
-- "Imagina ter um lugar pra escapar todo final de semana, a praia a 3 minutos, sem depender de hotel."
-- "Quem reserva agora ainda consegue escolher o lote. As unidades estão saindo rápido."
-- "Não precisa decidir nada na hora — vem conhecer pessoalmente e vê se faz sentido pra você."
+═══════════════════════════════════════════
+GATILHOS (use com naturalidade, sem exagero)
+═══════════════════════════════════════════
+- "Imagina ter um lugar pra escapar todo fim de semana, praia a 3 minutos, sem depender de hotel."
+- "Quem reserva agora ainda escolhe o lote — as unidades estão saindo rápido."
+- "Não precisa decidir nada na hora, vem conhecer e sente se faz sentido pra você."
 
-URGÊNCIA — quando hesitar em visitar:
-"Já vendemos a maior parte do empreendimento. Quem agenda logo ainda tem escolha de lote."
+═══════════════════════════════════════════
+AGENDAMENTO (sempre com o aviso de plantão)
+═══════════════════════════════════════════
+"[Nome], as visitas são de terça a domingo. Você prefere sábado ou domingo, de manhã ou à tarde?
+Só te peço uma coisa: me avisa antes de ir. Meu plantão é por escala — se você chegar sem combinar comigo,
+outro corretor te atende e eu perco o atendimento. É só confirmar aqui que eu te garanto."
 
-EMPREENDIMENTO — Praia Rasa de Búzios 2:
+═══════════════════════════════════════════
+TOM
+═══════════════════════════════════════════
+- Clientes mais velhos: "o senhor", "a senhora", com naturalidade.
+- Comentário religioso: "Amém, com certeza" / "Dia abençoado".
+- Confirmações leves: "Pode ser sim", "Tá bom", "Perfeito".
 
-LOCALIZAÇÃO:
-- Estrada dos Búzios (RJ-106), Bairro da Rasa, divisa Búzios/Cabo Frio
-- 800m da Praia Rasa | 3 minutos da praia | Geribá a 8km
-- Sempre diga "próximo a Búzios". Só mencione Cabo Frio se perguntarem sobre endereço.
-- Maps: https://www.google.com/maps/@-22.7238716,-42.001362,493m
+═══════════════════════════════════════════
+DADOS DO EMPREENDIMENTO — PRAIA RASA DE BÚZIOS 2
+═══════════════════════════════════════════
+PRODUTO ÚNICO: você vende APENAS este empreendimento, nesta única localização. Por isso, nunca pergunte em que
+cidade, bairro ou região o cliente PROCURA — só existe um lugar. (Perguntar se ELE é da região, para saber se mora
+perto ou está de passagem, é diferente e pode.)
 
-INFRAESTRUTURA:
-- Fechado, murado, guarita com segurança 24h e monitoramento
-- Meio-fio instalado, rede elétrica em andamento, água encanada em breve
-- Playground, praça, quadra de praia, área verde, bosque
-- Taxa de condomínio: 10% do salário mínimo (só após entrega)
-- Próximo a condomínios de alto padrão, região de kitesurf
-- Quadras com vista mar e vista serra
+LOCALIZAÇÃO
+- Estrada dos Búzios (RJ-106), Bairro da Rasa, divisa Búzios/Cabo Frio.
+- 800m da Praia Rasa, 3 minutos da praia, Geribá a 8km.
+- Diga sempre "próximo a Búzios". Só mencione Cabo Frio se perguntarem o endereço.
+- Mapa: https://www.google.com/maps/@-22.7238716,-42.001362,493m
 
-LOTES 300m²:
-- A partir de R$899/mês | Entrada R$7.000 (3x sem juros ou 10x no cartão)
-- À vista a partir de R$90.000 | Vista mar: a partir de R$1.199/mês
+INFRAESTRUTURA
+- Condomínio fechado e murado, meio-fio instalado, rede elétrica em andamento, água em breve.
+- Guarita 24h quando a associação de moradores for fundada.
+- Playground, praça, área verde e bosque.
+- Quadras com vista mar e vista serra.
+- Próximo a condomínios de alto padrão; região de kitesurf.
+- Taxa da associação de moradores: 10% do salário mínimo, só após a entrega, já prevista em contrato.
 
-LOTES 600m²:
-- A partir de R$1.599/mês | Entrada R$14.000 (3x sem juros ou 10x no cartão)
-- À vista a partir de R$160.000 | Vista mar: a partir de R$1.999/mês
+LOTES 300m²
+- Entrada R$7.000 | Parcela a partir de R$899/mês (reajuste anual pelo IGPM).
+- À vista a partir de R$90.000.
+- Vista mar: a partir de R$1.199/mês (reajuste anual pelo IGPM).
 
-FINANCIAMENTO: direto pela incorporadora, sem SPC/Serasa, sem banco. Pode construir com 3 parcelas pagas. Primeira parcela em 45 dias.
+LOTES 600m²
+- Entrada R$14.000 | Parcela a partir de R$1.599/mês (reajuste anual pelo IGPM).
+- À vista a partir de R$160.000.
+- Vista mar: a partir de R$1.999/mês (reajuste anual pelo IGPM).
 
-DOCUMENTAÇÃO:
-"Tem RGI sim. A incorporadora está finalizando o processo na prefeitura. Após a liberação, quem estiver com o lote quitado terá direito à transferência para o seu nome — é opcional, fica por sua conta."
+PAGAMENTO E FINANCIAMENTO
+- Direto pela incorporadora, sem SPC/Serasa, sem banco.
+- Primeira parcela em 45 dias.
+- Pode começar a construir com 3 parcelas pagas.
+- IGPM: índice de correção aplicado uma vez por ano (uma média de percentual). Explique de forma simples se perguntarem.
 
-AGENDAMENTO FINAL:
-"As visitas são de terça a domingo. Você prefere sábado ou domingo? Manhã ou tarde? Me confirma aqui que já deixo anotado."
+DOCUMENTAÇÃO (RGI)
+"Tem RGI sim. A incorporadora está finalizando o processo na prefeitura. Depois da liberação, quem estiver com o lote
+quitado tem direito à transferência para o seu nome — é opcional e fica por conta do cliente."
+
+VISITAS
+De terça a domingo, qualquer horário combinado. Sempre confirme dia e turno e reforce o aviso de plantão.
 """
 
 
@@ -228,7 +319,9 @@ def send_video(phone, video_url, caption=""):
 
 
 def send_media_package(phone):
-    """Envia vídeos e fotos. Sem followup hardcoded — IA continua naturalmente."""
+    """Envia vídeos e fotos + a pergunta de reengajamento.
+    NÃO faz append no histórico: o registro já é feito (consolidado) em get_ai_response,
+    evitando dois turnos de assistant seguidos."""
     try:
         send_message(phone, "Olha só os vídeos do empreendimento 👇")
         send_video(phone, VIDEO_URL_1)
@@ -240,10 +333,7 @@ def send_media_package(phone):
             send_image(phone, photo_url)
             time.sleep(1)
         time.sleep(2)
-        # Pergunta única após as mídias — sem duplicar com a IA
-        followup = "O que achou? 😊"
-        send_message(phone, followup)
-        append_message(phone, "assistant", followup)
+        send_message(phone, "O que achou? 😊")
         print(f"Media package complete for {phone}")
     except Exception as e:
         print(f"Error in send_media_package for {phone}: {e}")
@@ -251,7 +341,8 @@ def send_media_package(phone):
 
 def send_alert(phone_client):
     alert_msg = f"⚠️ ALERTA — Cliente {phone_client} fez uma pergunta que não soube responder. Assuma a conversa!"
-    send_message(ALERT_NUMBER, alert_msg)
+    for number in ALERT_NUMBERS:
+        send_message(number, alert_msg)
 
 
 # ─── TRANSCRIÇÃO DE ÁUDIO ─────────────────────────────────────────────────────
@@ -279,15 +370,25 @@ def transcribe_audio(audio_url):
         return None
 
 
+# ─── HELPER: extrair texto de uma mensagem ────────────────────────────────────
+
+def extract_text(message):
+    return (
+        message.get('text') or message.get('body') or
+        message.get('content') or message.get('conversation') or ''
+    )
+
+
 # ─── IA ───────────────────────────────────────────────────────────────────────
 
 def get_ai_response(phone, user_message):
+    """Gera a resposta, salva no histórico já LIMPA (sem as tags internas) e
+    retorna (texto_limpo, alert_flag, media_flag)."""
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-    # Adiciona mensagem do usuário ao histórico persistente
     history = append_message(phone, "user", user_message)
 
-    # Contexto de horário (só no system prompt, sem mensagem extra)
+    # Contexto de horário (só no system prompt)
     import pytz
     try:
         br_time = datetime.now(pytz.timezone("America/Sao_Paulo"))
@@ -295,12 +396,11 @@ def get_ai_response(phone, user_message):
         hora_int = br_time.hour
         saudacao = "Bom dia" if hora_int < 12 else ("Boa tarde" if hora_int < 18 else "Boa noite")
         time_info = f"\n\n[Horário atual: {hora} — use '{saudacao}' apenas se for o primeiro contato]"
-    except:
+    except Exception:
         time_info = ""
 
     system = SYSTEM_PROMPT + time_info
 
-    # Monta histórico para a API: prefixo de boas-vindas + últimas 20 mensagens
     last_20 = history[-20:]
     api_messages = [
         {"role": "user",      "content": "Olá"},
@@ -309,14 +409,25 @@ def get_ai_response(phone, user_message):
 
     response = client.messages.create(
         model="claude-sonnet-4-5-20250929",
-        max_tokens=400,
+        max_tokens=600,
         system=system,
         messages=api_messages
     )
 
-    reply = response.content[0].text
-    append_message(phone, "assistant", reply)
-    return reply
+    reply_raw   = response.content[0].text
+    alert_flag  = '[ALERTA]' in reply_raw
+    media_flag  = '[ENVIAR_MIDIA]' in reply_raw
+    reply_clean = reply_raw.replace('[ALERTA]', '').replace('[ENVIAR_MIDIA]', '').strip()
+
+    # Histórico: versão limpa (sem tags). Se enviou mídia, registra num ÚNICO turno
+    # de assistant que já inclui a nota da pergunta de reengajamento.
+    if media_flag:
+        hist_text = reply_clean + "\n[Enviei as fotos e vídeos do empreendimento e perguntei: O que achou?]"
+    else:
+        hist_text = reply_clean
+    append_message(phone, "assistant", hist_text)
+
+    return reply_clean, alert_flag, media_flag
 
 
 # ─── WEBHOOK ──────────────────────────────────────────────────────────────────
@@ -334,21 +445,59 @@ def webhook():
         if not message:
             return jsonify({'status': 'no_message'}), 200
 
-        if message.get('fromMe', False) or message.get('wasSentByApi', False):
-            return jsonify({'status': 'from_me'}), 200
-
         if message.get('isGroup', False):
             return jsonify({'status': 'group'}), 200
 
-        msg_type  = message.get('type', '') or message.get('messageType', '')
-        media_type = message.get('mediaType', '')
+        from_me = message.get('fromMe', False)
+        is_api  = message.get('wasSentByApi', False)
 
-        sender_pn = message.get('sender_pn', '') or message.get('chatId', '')
-        phone = sender_pn.replace('@s.whatsapp.net', '').replace('@c.us', '')
+        # Identifica a CONVERSA (o cliente). chatId aponta pro cliente tanto em
+        # mensagens recebidas quanto nas enviadas por você — por isso vem primeiro.
+        convo = message.get('chatId', '') or message.get('sender_pn', '')
+        phone = convo.replace('@s.whatsapp.net', '').replace('@c.us', '').replace('@lid', '')
 
         if not phone:
             return jsonify({'status': 'no_phone'}), 200
 
+        msg_type   = message.get('type', '') or message.get('messageType', '')
+        media_type = message.get('mediaType', '')
+
+        # ───────────────────────────────────────────────────────────────────
+        # 1) MENSAGEM ENVIADA PELO PRÓPRIO WHATSAPP (fromMe)
+        # ───────────────────────────────────────────────────────────────────
+        if from_me:
+            # 1a) Foi o BOT que enviou (via API) → ignora.
+            if is_api:
+                return jsonify({'status': 'from_bot'}), 200
+
+            # 1b) Foi VOCÊ digitando manualmente.
+            manual_text = extract_text(message).strip()
+            print(f"[MANUAL] Você digitou para {phone}: '{manual_text[:40]}'  (fromMe={from_me}, api={is_api})")
+
+            # Palavra-chave para reativar o bot
+            if manual_text == RESUME_KEYWORD:
+                clear_pause(phone)
+                return jsonify({'status': 'resumed'}), 200
+
+            # Qualquer outra coisa = você assumiu a conversa → pausa o bot
+            set_pause(phone)
+            if manual_text:
+                append_message(phone, "assistant", manual_text)  # mantém contexto p/ quando o bot voltar
+            return jsonify({'status': 'paused_human_takeover'}), 200
+
+        # ───────────────────────────────────────────────────────────────────
+        # 2) MENSAGEM DO CLIENTE — se a conversa está pausada, NÃO responde
+        # ───────────────────────────────────────────────────────────────────
+        if is_paused(phone):
+            txt = extract_text(message).strip()
+            if txt:
+                append_message(phone, "user", txt)  # guarda contexto, sem responder
+            print(f"⏸️  {phone} está em atendimento humano — bot não respondeu.")
+            return jsonify({'status': 'paused_no_reply'}), 200
+
+        # ───────────────────────────────────────────────────────────────────
+        # 3) FLUXO NORMAL DO BOT
+        # ───────────────────────────────────────────────────────────────────
         text = ""
 
         # Áudio
@@ -388,16 +537,16 @@ def webhook():
 
         # Texto
         elif msg_type in ('text', 'Conversation', 'extendedTextMessage'):
-            text = (
-                message.get('text') or message.get('body') or
-                message.get('content') or message.get('conversation') or ''
-            ).strip()
+            text = extract_text(message).strip()
 
         # Cliente enviou imagem/vídeo
         elif msg_type == 'media' and media_type in ('image', 'video', 'sticker', 'document'):
-            reply = get_ai_response(phone, "[cliente enviou uma imagem]")
-            reply = reply.replace('[ALERTA]', '').replace('[ENVIAR_MIDIA]', '').strip()
+            reply, alert_flag, media_flag = get_ai_response(phone, "[cliente enviou uma imagem]")
             send_message(phone, reply)
+            if alert_flag:
+                send_alert(phone)
+            if media_flag:
+                threading.Thread(target=send_media_package, args=(phone,)).start()
             return jsonify({'status': 'ok'}), 200
         else:
             print(f"Skipping type: {msg_type}")
@@ -408,12 +557,10 @@ def webhook():
 
         print(f"phone='{phone}', text='{text[:80]}'")
 
-        reply = get_ai_response(phone, text)
+        reply, alert_flag, media_flag = get_ai_response(phone, text)
 
-        alert_flag = '[ALERTA]' in reply
-        media_flag = '[ENVIAR_MIDIA]' in reply
-
-        # Fallback: detecta pedido de mídia direto no texto do cliente
+        # Rede de segurança: se o modelo não emitiu a tag mas o cliente claramente
+        # aceitou ver mídia logo após você oferecer.
         if not media_flag:
             media_keywords = ['sim', 'pode', 'quero', 'ok', 'claro', 'manda', 'foto', 'fotos',
                               'video', 'vídeo', 'videos', 'vídeos', 'queria ver', 'quero ver',
@@ -424,8 +571,6 @@ def webhook():
             if (any(kw in text.lower() for kw in media_keywords) and
                     any(kw in last_bot.lower() for kw in ['foto', 'vídeo', 'video', 'imagens', 'mandar'])):
                 media_flag = True
-
-        reply = reply.replace('[ALERTA]', '').replace('[ENVIAR_MIDIA]', '').strip()
 
         print(f"Sending reply: {reply[:80]}")
         send_message(phone, reply)
@@ -475,6 +620,10 @@ def send_recovery_message():
     if not phone:
         recovery_index += 1
         return
+    # Não dispara recovery em quem está em atendimento humano
+    if is_paused(phone):
+        recovery_index += 1
+        return
     message = custom_msg or f"Oi{' ' + name if name else ''}! Aqui é a Evelin 😊 Ainda temos algumas unidades no Praia Rasa de Búzios 2 — e as últimas estão saindo rápido. Você ainda tem interesse? Me avisa antes de visitar que garanto seu atendimento!"
     send_message(phone, message)
     recovery_index += 1
@@ -484,7 +633,20 @@ def send_recovery_message():
 
 @app.route('/health', methods=['GET'])
 def health():
-    return jsonify({'status': 'running', 'timestamp': datetime.now().isoformat()}), 200
+    r = get_redis()
+    redis_ok = False
+    if r:
+        try:
+            r.ping()
+            redis_ok = True
+        except Exception:
+            redis_ok = False
+    return jsonify({
+        'status': 'running',
+        'redis': 'ok' if redis_ok else 'OFFLINE',
+        'memory_enabled': redis_ok,
+        'timestamp': datetime.now().isoformat()
+    }), 200
 
 
 @app.route('/recovery/start', methods=['POST'])
@@ -496,6 +658,7 @@ def start_recovery():
 # ─── INICIALIZAÇÃO ────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
+    get_redis()  # conecta e loga o estado da memória logo no start
     scheduler = BackgroundScheduler()
     scheduler.add_job(send_recovery_message, 'interval', hours=RECOVERY_INTERVAL_HOURS)
     scheduler.start()
